@@ -1,0 +1,532 @@
+globals[
+  target-exit
+  target
+  shoot-number
+  shoot-miss
+  shoot-die-people
+  mark-stop-ticks
+  stop-ticks
+]
+
+breed [killers killer]
+breed [civilians civilian]
+breed [exits exit]
+breed [survivors survivor]
+breed [dead-killers dead-killer]
+
+turtles-own[
+  blood
+  last-collision
+  last-shoot
+]
+
+civilians-own[
+  fall-time
+  fall
+  shoot-time
+  start-blood
+  start-exit-radius
+  exit-radius
+  speed
+  fight
+  prosocial
+  ready-hero
+
+]
+
+killers-own[
+  shoot
+  shoot-time
+  police-shoot-time
+]
+
+links-own[
+  link-birthday
+]
+
+
+to setup
+  clear-all
+  import-pcolors "3.jpg"
+  revise-map
+  exits-set
+  make-door
+  set-default-shape civilians "circle"
+  set-default-shape killers "triangle"
+  make-civilians
+  make-killers
+  make-fighters
+  set mark-stop-ticks 0
+  ask patch 26 31 [sprout  1 [set shape "car" set color yellow set size 1.5 stamp die]]
+  reset-ticks
+end
+
+to exits-set
+   create-exits 1 [ setxy  45  4    hide-turtle]
+   create-exits 1 [ setxy  45  18   hide-turtle]
+end
+
+to make-door
+  if (set-door = "2 case door-R" ) [set-2-case-door-R]
+  if (set-door = "3 up door-L" ) [set-3-up-door-L]
+  if (set-door = "3 down door-R" ) [set-3-down-door-R]
+  if (set-door = "4 door-LR" ) [set-4-door-LR]
+  if (set-door = "5 door-LR" ) [set-5-door-LR]
+  if (set-door = "2 door-U" ) [set-2-door-U]
+  if (set-door = "3 door-UD" ) [set-3-door-UD]
+  if (set-door = "4 up door-U" ) [set-4-up-door-U]
+  if (set-door = "4 down door-D" ) [set-4-down-door-D]
+  if (set-door = "5 door-UD" ) [set-5-door-UD]
+  if (set-door = "all door open" ) [set-all-door-open]
+end
+
+
+to revise-map
+  ask patches with [(25 <= pxcor and pxcor <= 31) and (21 <= pycor and pycor <= 24) ] [set pcolor 99.3]
+  ask patches with [(21 <= pxcor and pxcor <= 27) and (17 <= pycor and pycor <= 22) ] [set pcolor 99.3]
+end
+
+to make-civilians
+    create-civilians civilians-num [
+    setxy random-xcor random-ycor
+    set size 0.5
+    set color 105
+    set fall 0
+    random-blood
+    recolor
+    set blood start-blood
+    perception-set
+    set ready-hero 0
+    set fight 0]
+    ask civilians [move-to one-of patches with [pcolor = 99.2 and not any? other turtles-here]]
+end
+
+
+to random-blood
+  set start-blood  round random-normal civilians-blood 20
+end
+
+
+to perception-set
+  if visible-range = "homogeneity"  [ set start-exit-radius perception-radius]
+  if visible-range = "heterogeneity" [ set start-exit-radius  round random-poisson  perception-radius ]
+  set exit-radius  start-exit-radius
+end
+
+to make-killers
+  create-killers killer-num [
+    set size 1
+    set color red
+    set heading 270
+    set blood killer-blood
+    setxy (25 )(14)
+  ]
+end
+
+
+
+to go
+
+  die-or-out
+  ask civilians with [blood > 0][ run-out ]
+  recolor-patch
+  fight-with-killer
+  ask civilians with [ 104 <= color and color <= 106][if  ((start-blood - blood) / start-blood)  >=  ( injured-blood / 100) and blood > 0
+    [set color green ] ]
+  ask civilians [if  ((start-blood - blood) / start-blood)  >=  ( fall-blood / 100) and blood > 0
+    [set color pink ] ]
+  ask killers with [blood > 0] [ shooting     killer-move]
+  ask killers [if blood <= 0 [hatch-dead-killers 1[set color grey set shape "triangle" set size 1] die] ]
+  ask civilians [if blood <= 0 [set color grey]]
+  if ticks >= 1500 and [pcolor] of (patch 26 31)  = green [stop]
+  if ticks >= 1850 [stop]
+  tick
+end
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;;;;;;;;;;;;;;;civilians procedure;;;;;;;;;;;;;;;;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+to die-or-out
+  ask civilians [
+    if any? other exits-here or xcor <= 1  [
+      if color = green [
+        hatch-survivors 1
+        [set hidden? false
+          setxy max-pxcor max-pycor
+          set color  green]
+      ]
+      if color != green [ hatch-survivors 1 [set hidden? false   setxy max-pxcor max-pycor ]]
+       die ]
+    if any? other exits-here or xcor <= 1[
+     if color = green  [
+        hatch-survivors 1
+        [set hidden? false
+          setxy max-pxcor max-pycor
+          set color  green]
+      ]
+      if color != green [hatch-survivors 1 [set hidden? false    setxy max-pxcor max-pycor ]]
+       die ]
+  ]
+end
+
+
+to bounce
+  ask civilians [ if [pcolor] of patch-ahead 0.1 = black [set heading heading + random 180]]
+end
+
+
+to run-out
+  set exit-radius abs start-exit-radius + ticks / 25
+  if exit-radius >= 21 [set exit-radius 21]
+   ifelse any? exits in-radius  exit-radius
+    [set target-exit nearest-exit
+          hiding
+          bounce
+          move
+          check-for-collision
+       ifelse any? exits in-radius  (exit-radius / 2)
+        [  go-if-empty-nearby ]
+        [  set heading towardsxy [xcor] of target-exit  [ycor] of target-exit]
+  ]
+      [
+         hiding
+         bounce
+         move
+         check-for-collision]
+end
+
+to-report nearest-exit
+  let x xcor
+  let y ycor
+  report one-of (exits with-min [distancexy x y])
+end
+
+to hiding
+  if count turtles-on next-patch >= 3
+    [lt random 270 + 90]
+  stop
+end
+
+
+to move
+  if count civilians-on next-patch <= 3 and fall != 1 and color != pink
+      [set speed random-float 0.1 + 0.1
+        fd speed]
+end
+
+
+to recolor
+  if start-blood > 85 [set color 105 - 1 ]
+  if start-blood <= 85 [set color 105 + 0.5 ]
+end
+
+to check-for-collision
+    if count other civilians-here >= 1
+  [
+    let candidate one-of other civilians-here with
+      [who < [who] of myself and myself != last-collision]
+    if (candidate != nobody)
+    [
+      collide-with candidate
+      set last-collision candidate
+      ask candidate [ set last-collision myself ]
+    ]
+  ]
+end
+
+
+to collide-with [other-civilians]
+
+  ifelse [fall] of other-civilians  != 1
+    [ask civilians-here with [ fall != 1] [set blood (blood - civilians-collision)]]
+    [ask other-civilians [set blood (blood - civilians-power)]
+        ask self [ lt random-float 360  bounce ]]
+
+  civilians-fall
+end
+
+to civilians-fall
+  if color = pink [set fall 1]
+end
+
+to go-if-empty-nearby
+let empty-patches neighbors in-cone 1 230  with [ count turtles-here <= 2]
+    if any? empty-patches
+      [ let target2 one-of empty-patches
+        face target2
+        check-for-collision
+        hiding
+       bounce
+       ifelse count turtles-on patch-ahead 1 >= 3 [  hiding ]
+     [  move
+        set heading towardsxy [xcor] of target-exit  [ycor] of target-exit ]
+  ]
+end
+
+to-report next-patch
+  if heading < towardsxy (pxcor + 0.5) (pycor + 0.5)
+    [ report patch-at 0 1 ]
+
+  if heading < towardsxy (pxcor + 0.5) (pycor - 0.5)
+    [ report patch-at 1 0 ]
+
+  if heading < towardsxy (pxcor - 0.5) (pycor - 0.5)
+    [ report patch-at 0 -1 ]
+
+  if heading < towardsxy (pxcor - 0.5) (pycor + 0.5)
+    [ report patch-at -1 0 ]
+
+  report patch-at 0 1
+end
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;;;;;;;;;;;;;;;;;killers procedure;;;;;;;;;;;;;;;;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+to shooting
+   find-target
+   link-die
+end
+
+
+to find-target
+  ask killers with [shoot = 0 and blood > 0 ]
+  [
+  if pcolor = yellow  [
+      if count civilians with [fight = 1 and blood > 0 and pcolor = yellow] >= 1
+      [ifelse random 100 <= shoot-fighter-probability
+        [set target one-of civilians with [fight = 1 and blood > 0 and pcolor = yellow ]]
+        [set target one-of civilians with [fight = 0 and blood > 0 and pcolor = yellow]]
+      ]
+      if count civilians with [fight = 1 and blood > 0 and pcolor = yellow] = 0
+      [set target one-of civilians with [fight = 0 and blood > 0 and pcolor = yellow ]]
+    ]
+  if pcolor = white  [set target one-of civilians with [blood > 0 and pcolor = white and xcor >= 26 and ycor <= 25]]
+
+
+  let myx xcor
+  let myy ycor
+  if nobody = target [stop]
+
+  if pcolor != 8.3 and pcolor != 8.4 and pcolor != 14.9 and pcolor != red
+  [create-link-to target
+  set shoot 1
+  set shoot-time ticks
+  set shoot-number shoot-number + 1]
+
+  ask target [
+     set shoot-time ticks
+     if distancexy myx myy <= shoot-distance [
+        if [blood] of target <= shoot-damage
+        [ set shoot-die-people  shoot-die-people + 1]
+         set blood  (blood - shoot-damage)
+       ]
+     if distancexy myx myy > (shoot-distance )
+        [set shoot-miss shoot-miss + 1]
+    ]
+     ask links [set link-birthday ticks
+       set color black]
+     link-die
+  ]
+  ask killers with [shoot = 1]
+  [ if shoot = 1 and  ticks >= shoot-time + 5 + random 3
+    [set shoot 0]
+  ]
+end
+
+
+to link-die
+  if nobody = links [stop]
+  ask links
+  [if  ticks >= link-birthday + 1
+    [die]
+  ]
+end
+
+
+to killer-move
+  if [pcolor] of patch-here = yellow [fd 0.1 + random-float 0.1]
+  if [pcolor] of patch-here = 99.2 [fd 0.1]
+  if [pcolor] of patch-here = white [fd 0.2]
+  if [pcolor] of patch-here = 8.3 [fd 0.2]
+  if [pcolor] of patch-here = 8.4 [fd 0.2]
+  if [pcolor] of patch-here = 14.9 [fd 0.2]
+  if [pcolor] of patch-here = red [fd 0.2]
+  if pxcor =  25 and 14 <= pycor and pycor <= 15 and  250 <= heading and heading <= 300 [ face patch 5 15]
+  if pxcor =  5 and pycor = 15 and 250 <= heading and heading <= 300 [ set heading 0]
+  if pxcor =  5 and pycor = 23 [ set heading 180]
+  if pxcor =  5 and pycor = 6 [ set heading 0]
+  if pxcor =  5 and pycor = 14 and heading = 0  [face patch 25 15]
+  if pxcor =  25 and pycor = 15 and 45 <= heading and heading <= 120  [face patch 46 17]
+  if pxcor =  46 and pycor = 17 and 45 <= heading and heading <= 120  [set heading 0]
+  if pxcor =  46 and pycor = 31 and heading = 0  [set heading 270   ]
+  if pxcor =  26 and pycor = 31 and heading = 270  [set heading 90
+    if [pcolor] of patch-here = 14.9 [ask patch-here [set pcolor red]]
+    if [pcolor] of patch-here = red and [pcolor] of patch 46 3 = 8.4 [ask patch-here [set pcolor green]]
+    ]
+  if pxcor =  46 and pycor = 31 and heading = 90 [ set heading 180]
+  if pxcor =  46 and pycor = 3 and 180 <= heading and heading <= 270 [ face patch 25 15  ask patch-here [set pcolor 8.4]]
+end
+
+
+to recolor-patch
+  ask killers [
+    if xcor > 25 [ask patches with [pcolor = yellow] [set pcolor 99.2]]
+    if 2 <= xcor and xcor  <= 25 and 13 <= ycor and ycor <= 15[
+      ask patches with [pcolor = yellow] [set pcolor 99.2]
+      ask patches with [2 <= pxcor and pxcor <= 25 and 14 <= pycor and pycor <= 15] [set pcolor yellow]]
+    if 2 <= xcor and xcor  <= 8 and 13 <= ycor and ycor <= 15[
+      ask patches with [2 <= pxcor and pxcor <= 8 and 6 <= pycor and pycor <= 23] [set pcolor yellow]
+      ask patches with [9 <= pxcor and pxcor <= 25 and 14 <= pycor and pycor <= 15] [set pcolor yellow]]
+    if 16.5 <= xcor and xcor <= 17.5 and 14 <= ycor and ycor <= 16[
+      ask patches with [pxcor = 17  and 16 <= pycor and pycor <= 25] [set pcolor yellow]]
+    if xcor <= 16.5 or xcor >= 17.5 and 14 <= ycor and ycor <= 16 [
+      ask patches with [pxcor = 17  and 16 <= pycor and pycor <= 25] [set pcolor 99.2]]
+    if 10.5 <= xcor and xcor <= 11.5 and 14 <= ycor and ycor <= 16[
+      ask patches with [pxcor = 11  and 9 <= pycor and pycor <= 13] [set pcolor yellow]]
+    if xcor <= 10.5 or xcor >= 11.5 and 14 <= ycor and ycor <= 16 [
+      ask patches with [pxcor = 11  and 9 <= pycor and pycor <= 13] [set pcolor 99.2]]
+    if 14.5 <= xcor and xcor <= 15.5 and 14 <= ycor and ycor <= 16[
+      ask patches with [pxcor = 15  and 9 <= pycor and pycor <= 13] [set pcolor yellow]]
+    if xcor <= 14.5 or xcor >= 15.5 and 14 <= ycor and ycor <= 16 [
+      ask patches with [pxcor = 15  and 9 <= pycor and pycor <= 13] [set pcolor 99.2]]
+    if 2 <= xcor and xcor  <= 8 and 16 <= ycor and ycor <= 23[
+      ask patches with [pcolor = yellow] [set pcolor 99.2]
+      ask patches with [2 <= pxcor and pxcor <= 8 and 6 <= pycor and pycor <= 23] [set pcolor yellow]
+    ]
+    if 2 <= xcor and xcor <= 8 and 18 <= ycor and ycor <= 19[
+      ask patches with [9 <= pxcor and pxcor <= 19 and 18 <= pycor and pycor <= 19] [set pcolor yellow]]
+     if 2 >= xcor and xcor >= 8 and 6 <= ycor and ycor > 19  [
+      ask patches with [pcolor = yellow] [set pcolor 99.2]]
+     if 2 >= xcor and xcor >= 8 and 6 <= ycor and ycor < 18  [
+      ask patches with [pcolor = yellow] [set pcolor 99.2]]
+    if 2 <= xcor and xcor  <= 8 and 6 <= ycor and ycor <= 13[
+      ask patches with [2 <= pxcor and pxcor <= 25 and 14 <= pycor and pycor <= 15] [set pcolor 99.2]
+      ask patches with [2 <= pxcor and pxcor <= 8 and 6 <= pycor and pycor <= 23] [set pcolor yellow]]
+  ]
+end
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;;;;;;;;;;;;;;;;;;;fighter procedure;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+to make-fighters
+  ask n-of fighter-num civilians [
+       set fight 1
+       set shape "star"
+       set size 1
+       set color 125]
+end
+
+
+to fight-with-killer
+  if count killers with [blood > 0] >= 0[
+  ask civilians with [fight = 1][
+      if pcolor = yellow and nobody != nearest-killer[
+        face nearest-killer
+        if count killers-here >= 1 [
+          ask one-of killers-here [set blood  blood - fight-blood]]
+       ]
+     ]
+   ]
+  stop
+end
+
+to-report nearest-killer
+  let x xcor
+  let y ycor
+  report one-of (killers with-min [distancexy x y])
+end
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;door setting;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+to set-2-case-door-R
+  ask patch 9 7 [set pcolor white]
+end
+
+
+to set-3-up-door-L
+  ask patch 9 7 [set pcolor white]
+  ask patch 9 25 [set pcolor white]
+end
+
+
+to set-3-down-door-R
+  ask patch 9 7 [set pcolor white]
+  ask patch 25 10 [set pcolor white]
+end
+
+to set-4-door-LR
+  ask patch 9 7 [set pcolor white]
+  ask patch 9 25 [set pcolor white]
+  ask patch 25 10 [set pcolor white]
+end
+
+to set-5-door-LR
+  ask patch 9 7 [set pcolor white]
+  ask patch 9 25 [set pcolor white]
+  ask patch 25 10 [set pcolor white]
+  ask patch 1 15 [set pcolor white]
+end
+
+to set-2-door-U
+  ask patch 5 24 [set pcolor white]
+end
+
+to set-3-door-UD
+  ask patch 5 24 [set pcolor white]
+  ask patch 5 5 [set pcolor white]
+end
+
+to set-4-up-door-U
+  ask patch 5 24 [set pcolor white]
+  ask patch 5 5 [set pcolor white]
+  ask patch 15 26 [set pcolor white]
+end
+
+to set-4-down-door-D
+  ask patch 5 24 [set pcolor white]
+  ask patch 5 5 [set pcolor white]
+  ask patch 17 8 [set pcolor white]
+end
+
+to set-5-door-UD
+  ask patch 5 5 [set pcolor white]
+  ask patch 15 26 [set pcolor white]
+  ask patch 17 8 [set pcolor white]
+  ask patch 5 24 [set pcolor white]
+end
+
+to set-all-door-open
+  ask patch 1 15 [set pcolor white]
+  ask patch 15 26 [set pcolor white]
+  ask patch 17 8 [set pcolor white]
+  ask patch 5 24 [set pcolor white]
+  ask patch 5 5 [set pcolor white]
+  ask patch 9 7 [set pcolor white]
+  ask patch 25 10 [set pcolor white]
+  ask patch 9 25 [set pcolor white]
+end
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+to-report death-people
+  report count civilians with [blood <= 0]
+end
+
+to-report injured-people
+  report count turtles with [color = green] + count civilians with [color = pink]
+end
+
+to-report death-killers
+  report count dead-killers
+end
+
+to-report death-fighters
+  report count civilians with [fight = 1 and color = grey]
+end
