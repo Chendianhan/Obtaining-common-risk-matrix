@@ -1,2 +1,2 @@
 # Obtaining-the-Social-knowledge
-NetLoogo simulation code and data of shooting case
+NetLogo code and simulation data of shooting case
